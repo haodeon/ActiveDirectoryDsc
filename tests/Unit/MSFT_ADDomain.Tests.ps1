@@ -55,6 +55,7 @@ try
         $mgmtDomainMode = [Microsoft.ActiveDirectory.Management.ADDomainMode]::Windows2016Domain
         $NTDSParametersRegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
         $NetlogonParametersRegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'
+        $RebootHintRegPath = Join-Path -Path $NetlogonParametersRegPath -ChildPath 'LocatorDCPromoPreRebootHint'
 
         $mockAdministratorCredential = [System.Management.Automation.PSCredential]::new('DummyUser',
             (ConvertTo-SecureString -String 'DummyPassword' -AsPlainText -Force))
@@ -242,6 +243,26 @@ try
                             Should -Throw ($script:localizedData.GetAdForestUnexpectedError -f $mockForestName)
                     }
                 }
+
+                Context 'When the domain controller is pending reboot' {
+                    BeforeAll {
+                        Mock -CommandName Test-Path `
+                            -ParameterFilter { $Path -eq $RebootHintRegPath } `
+                            -MockWith { $true }
+
+                        $mockDCPendingReboot = $mockADDomainAbsent.Clone()
+                        $mockDCPendingReboot['DomainExist'] = $true
+
+                        $result = Get-TargetResource @mockGetTargetResourceParameters
+                    }
+
+                    foreach ($property in $mockDCPendingReboot.Keys)
+                    {
+                        It "Should return the correct $property property" {
+                            $result.$property | Should -Be $mockDCPendingReboot.$property
+                        }
+                    }
+                }
             }
         }
 
@@ -365,6 +386,35 @@ try
                     Assert-MockCalled -CommandName Install-ADDSForest `
                         -ParameterFilter { $DomainMode -eq $mockDomainForestMode }
                 }
+
+                It 'Does not signal reboot when SuppressReboot is $true' {
+                    if (Test-Path variable:\global:DSCMachineStatus) {
+                        Remove-Variable -Name DSCMachineStatus -Scope Global -Force
+                    }
+
+                    Set-TargetResource @setTargetResourceForestParams -SuppressReboot $true
+
+                    Test-Path variable:\global:DSCMachineStatus | Should -BeFalse
+                }
+
+                It 'Should reboot when domain controller is pending reboot' {
+                    if (Test-Path variable:\global:DSCMachineStatus) {
+                        Remove-Variable -Name DSCMachineStatus -Scope Global -Force
+                    }
+
+                    Mock -CommandName Test-Path `
+                        -ParameterFilter { $Path -eq $RebootHintRegPath } `
+                        -MockWith { $true }
+
+                    $mockDCPendingReboot = $mockADDomainAbsent.Clone()
+                    $mockDCPendingReboot['DomainExist'] = $true
+                    Mock -CommandName Get-TargetResource -MockWith { return $mockDCPendingReboot }
+
+                    Set-TargetResource @setTargetResourceForestParams -SuppressReboot $false
+
+                    $status = Get-Variable -Name DSCMachineStatus -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+                    $status | Should -Be 1
+                }
             }
 
             Context 'When Installing a Child Domain' {
@@ -460,6 +510,35 @@ try
 
                     Assert-MockCalled -CommandName Install-ADDSDomain `
                         -ParameterFilter { $DomainMode -eq $mockDomainForestMode }
+                }
+
+                It 'Does not signal reboot when SuppressReboot is $true' {
+                    if (Test-Path variable:\global:DSCMachineStatus) {
+                        Remove-Variable -Name DSCMachineStatus -Scope Global -Force
+                    }
+
+                    Set-TargetResource @setTargetResourceDomainParams -SuppressReboot $true
+
+                    Test-Path variable:\global:DSCMachineStatus | Should -BeFalse
+                }
+
+                It 'Should reboot when domain controller is pending reboot' {
+                    if (Test-Path variable:\global:DSCMachineStatus) {
+                        Remove-Variable -Name DSCMachineStatus -Scope Global -Force
+                    }
+
+                    Mock -CommandName Test-Path `
+                        -ParameterFilter { $Path -eq $RebootHintRegPath } `
+                        -MockWith { $true }
+
+                    $mockDCPendingReboot = $mockADDomainAbsent.Clone()
+                    $mockDCPendingReboot['DomainExist'] = $true
+                    Mock -CommandName Get-TargetResource -MockWith { return $mockDCPendingReboot }
+
+                    Set-TargetResource @setTargetResourceDomainParams -SuppressReboot $false
+
+                    $status = Get-Variable -Name DSCMachineStatus -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+                    $status | Should -Be 1
                 }
             }
         }
